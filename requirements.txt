@@ -1,0 +1,10 @@
+# Generated with the following lines:
+# conda install pipreqs
+# pipreqs /home/gorrono/Desktop/UPV/L2ARUT/L2A_uncertainty
+# You can install them in your computer with:
+# pip install -r requirements.txt
+matplotlib==3.3.4
+numpy==1.19.5
+pandas==1.1.5
+scipy==1.5.3
+seaborn==0.11.2
