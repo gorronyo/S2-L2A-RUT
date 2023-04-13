@@ -75,3 +75,6 @@ If you prefer not to obtain these plots, please comment line 23!.
 |:-------------------------------------------------------------------------------------------------------------------------------------------------------------------:|
 |                                         <b>Surface reflectance distribution for Sentinel-2 L2A B5 at the Amazon forest</b>                                          |
 
+| ![Spectral_correlation_Amazonforest](./L2Aunc_results/amazon_reptranband1000samp/S2B_MSIL1C_20221107T144729_N0400_R139_T19MGP_20221107T174916_speccorrL2Arho.png) |
+|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------:|
+|                                          <b>Spectral error correlation for Sentinel-2 L2A bands at the Amazon forest</b>                                          |
