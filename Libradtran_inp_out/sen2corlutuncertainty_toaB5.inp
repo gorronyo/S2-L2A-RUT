@@ -1,0 +1,23 @@
+source solar /home/gorrono/Desktop/UPV/L2ARUT/data/Solar_irradiance_Thuillier_2002sentinel2a_msi_b05 per_nm
+number_of_streams 8
+output_user lambda uu
+sza 30
+atmosphere_file midlatitude_summer
+mol_abs_param reptran coarse
+mixing_ratio ch4 1.8607
+mixing_ratio co2 404.2
+mol_modify h2o 26.99 mm
+altitude 0.097
+albedo 0.15
+umu 1.0
+phi 100
+aerosol_default 
+zout TOA
+phi0 180
+rte_solver disort
+aerosol_set_tau_at_wvl 550.0 0.1878
+mol_modify O3 320.36 DU
+wavelength 693 714
+filter_function_file /home/gorrono/Desktop/UPV/L2ARUT/data/sentinel2a_msi_b05 normalize
+output_process integrate
+quiet
