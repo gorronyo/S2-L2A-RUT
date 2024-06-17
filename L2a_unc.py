@@ -18,9 +18,6 @@ import L1c_unc
 import utils
 import plots_L2aunc
 
-IRRADIANCE_FILE = 'Solar_irradiance_Thuillier_2002'
-DATA_FOLDER = os.path.join(os.getcwd(), 'data')
-S2SRFFILE = os.path.join(DATA_FOLDER, 'S2-SRF_COPE-GSEG-EOPG-TN-15-0007_3.0.xlsx')
 LIBRAD_REPTRANCHANNEL = {'B1': 'sentinel2a_msi_b01', 'B2': 'sentinel2a_msi_b02', 'B3': 'sentinel2a_msi_b03',
                          'B4': 'sentinel2a_msi_b04', 'B5': 'sentinel2a_msi_b05', 'B6': 'sentinel2a_msi_b06',
                          'B7': 'sentinel2a_msi_b07', 'B8': 'sentinel2a_msi_b08', 'B8A': 'sentinel2a_msi_b08a',
@@ -46,6 +43,9 @@ class L2aUnc:
         # this defines the sampling of Thuillier irradiance (also the SRF) and the output grid step in Libradtran.
         # The wavelength range is delimited by "wavelength" in the input file.
         self.libradstep = 0.1
+        # WV and AOT are automatically read from the product. But can be changed by the user (e.g. for validation).
+        self.aotuser = None
+        self.wvuser = None
         # Input LibRadTran parameterisation. Tuple with value and standard deviation.
         self.ch4 = (1.8, 0.1)
         self.co2 = (400, 40)
@@ -82,16 +82,12 @@ class L2aUnc:
 
         self.paramdict = None  # simulation parameters
 
-    def get_libradunc(self, path_l1c, path_l2a, latlon, roisize, toairrad_flag, adjacency_flag, lambertian_flag,
-                      libradunc_flag):
+    def get_libradunc(self, path_l1c, path_l2a, latlon, roisize, adjacency_flag, lambertian_flag, libradunc_flag, n_proc):
         '''
         :param path_l1c: (string) absolute path to the L1C ZIP file
         :param path_l2a: (string) absolute path to the L2A ZIP file
         :param latlon: (tuple) latitude and longitude in decimal degrees of the area to be processed
         :param roisize: (tuple) length in x and y direction of the rectangle area to be processed
-        :param toairrad_flag: String. If True, includes TOA irradiance uncertainty.(can be set to zero internally) and
-        False the precompiled S2 reptran band model is used (no irradiance uncertainty).
-        Recommended False mode since the other option will take much longer
         :param adjacency_flag: Boolean. If TRUE, includes adjacency correction uncertainty.
         :param lambertian_flag: Boolean. If TRUE, includes Lambertian assumption uncertainty.
         :param libradunc_flag: Boolean. If TRUE, includes Libradtran error.
@@ -105,18 +101,33 @@ class L2aUnc:
         # vis = 5 # maximum VIS is 5km
         # aot = np.exp(1.467 - 0.830 * np.log(vis))  # conversion from vis to AOT at 0km height from Thesis Guanter Fig 3.7
         # wv = 5 # maximum water vapour in summer for the LUT
+        # The user can set its own AOT and WV. This feature is used for validation purposes too.
+        if self.aotuser is None:
+            pass
+        elif self.aotuser:
+            aot = self.aotuser
+        if self.wvuser is None:
+            pass
+        elif self.wvuser:
+            wv = self.wvuser
+        print('WV value of ' + str(wv))
+
         # Ozone is based on metadata for tile and h is the mean altitude in the tile (for mountain regions limited)
         # Visibility/AOT @550nm uncertainty in S2 L2A data quality report Ref.: OMPC.CS.DQR.002.12-2022, Issue: 57.0
         # the formula is just the uncertainty of the requirement + the offset found during validation.
         if aot_method == 'CAMS':
             aotunc = np.abs(-0.46 * aot + 0.09) + (0.1*aot+0.03)  # cams fallbacksolution
+            print('AOT method is: ' + aot_method + 'with a value of ' + str(aot))
         elif aot_method == 'SEN2COR_DDV':
             aotunc = np.abs(-0.56 * aot + 0.07) + (0.1*aot+0.03)  # ddv uncertainty
+            print('AOT method is: ' + aot_method + 'with a value of ' + str(aot))
         elif aot_method == 'DEFAULT':
             aotunc = np.abs(-0.56 * aot + 0.07) + (0.1*aot+0.03)  # ddv uncertainty
+            print('AOT method is: ' + aot_method + 'with a value of ' + str(aot))
         else:
             print('Not recognised AOT method. Given default value of 0.15')
             aotunc = 0.15
+        aotunc = 0.025
 
         # wv uncertainty in S2 L2A data quality report Ref.: OMPC.CS.DQR.002.12-2022, Issue: 57.0
         wvunc = np.abs(-0.1 * wv + 0.03) + (0.1*wv+0.2)
@@ -131,75 +142,32 @@ class L2aUnc:
             midlat = 'midlatitude_summer'
 
         librad = libradtran_wrapper.libradwrapper()
+
         if aot_type == 'rura':
             pass  # we keep the default aerosol in input file that is the rural profile
         elif aot_type == 'mari':
-            librad.input_libradtran['aerosol_species_file'] = ('maritime_clean',)
+            librad.input_libradtran['aerosol_haze'] = ('4',)
         elif aot_type == 'urba':
-            librad.input_libradtran['aerosol_species_file'] = ('urban',)
+            librad.input_libradtran['aerosol_haze'] = ('5',)
         elif aot_type == 'dese':
-            librad.input_libradtran['aerosol_species_file'] = ('desert',)
+            librad.input_libradtran['aerosol_haze'] = ('1',)  # TODO - 6 is tropospheric and 1 is rural. We need OPAC?
+        if aot_type:
+            print('AOT model in the boundary layer is: ' + aot_type)
+        else:
+            print('AOT model in the boundary layer is set to default')
 
         # ---------------------------------------  STEP 2. L1C TOA uncertainty  ----------------------------------------
         l1c_unc_rho = self.get_l1unc(l1c_rad, l1cmetadatadict)  # dispersion % for value of radiance.
 
         # ------------------------------  STEP 3. Spectral irradiance (Etoa) uncertainty  ------------------------------
-        cw_etoa = [370, 500, 650, 850, 950, 1500, 2000, 2500]
+        # THIS WAS IMPLEMENTED IN V1 FOR TESTING AND REMOVED HERE TO PRESENT A MORE CLEAN CODE.
         s2cw = np.array([i for i in S2_CW.values()])
-        if toairrad_flag:
-            # TOA irradiance uncertainty based on values quoted in VNIR (first paper) and SWIR (second paper):
-            # Thuillier, G. et al. (1998). The Visible Solar Spectral Irradiance from 350 to 850 nm as Measured by the Solspec Spectrometer During the Atlas I Mission. In: Pap, J.M., Fröhlich, C., Ulrich, R.K. (eds) Solar Electromagnetic Radiation Study for Solar Cycle 22. Springer, Dordrecht. https://doi.org/10.1007/978-94-011-5000-2_4
-            # G. Thuillier, et al., “The Solar Spectral Irradiance from 200 to 2400 nm as Measured by the SOLSPEC Spectrometer from the ATLAS and EURECA Missions,” Solar Physics, Vol. 214, No. 1, 2003, pp. 1-22. doi:10.1023/A:1024048429145
-            # normalisation of 1.4%  mainly originating from the pyrometer calibration, and not from the PTB scale
-            # However, we keep the same values as a conservative approach.
-            unc_etoa = [2.15, 1.05, 0.85, 1.35, 1.1, 0.8, 0.65, 0.6]  # divided by 2 from original 2sigma in paper.
-            # unc_etoa = [0, 0, 0, 0, 0, 0, 0, 0]  # we can set it to zero to show low impact at surface reflectance.
-            # interpolate etoa uncertainty and rescale from %etoa to %l1c_rad
-            s2etoaunc = np.interp(s2cw, cw_etoa, unc_etoa)
-            # No info spectral correlation. RBF kernel (var=1, gamma=400) high corr depending on wavelength distance.
-            corr_etoa = utils.corr_rbf(1, 400, s2cw)
-            cov_etoa = np.dot(s2etoaunc.reshape(-1, 1), s2etoaunc.reshape(-1, 1).T) * corr_etoa
-            etoa_unc = np.moveaxis(utils.correlated_samples(np.zeros(12), cov_etoa, self.rep), 1, 0)
-
-            # read Thuillier file and generate an interpolated version that we can modify at each iteration
-            wav = []
-            irrad_interp = []
-            for bandname in LIBRAD_REPTRANCHANNEL.keys():
-                irrads = np.loadtxt(os.path.join(DATA_FOLDER, IRRADIANCE_FILE))
-                func = interpolate.interp1d(irrads[:, 0], irrads[:, 1], kind='linear')
-                interpwav = np.arange(S2BAND_RANGE[bandname][0], S2BAND_RANGE[bandname][1] + self.libradstep,
-                                      self.libradstep)
-                wav.append(interpwav)
-                irrads = func(interpwav)
-                irrad_interp.append(irrads)  # input sampling of solar irradiance will define the exit range
-                # the method resamples the irradiance to SRF at self.libradstep. Faster than SRF resampled to irradiance
-                # We tested that alternative approach and shows no remarkable diff. (code at the end of script)
-                with open(os.path.join(DATA_FOLDER, IRRADIANCE_FILE + LIBRAD_REPTRANCHANNEL[bandname]), 'w') as f:
-                    f.write('# nm \t mW/m2/nm\n')
-                    for j in range(irrads.shape[0]):
-                        row = str(np.round(interpwav[j], 2)) + '\t' + str(np.round( irrads[j], 6)) + '\n'
-                        f.write(row)
-
-                srf = np.loadtxt(os.path.join(DATA_FOLDER, LIBRAD_REPTRANCHANNEL[bandname]))
-                # last value is out of range but the SRF is negligible so we set to zero
-                func = interpolate.interp1d(srf[:, 0], srf[:, 1], kind='cubic', bounds_error=False, fill_value=0)
-                srfinterp = func(interpwav)
-                with open(os.path.join(DATA_FOLDER, LIBRAD_REPTRANCHANNEL[bandname] + 'interp'), 'w') as f:
-                    f.write('# nm \t srf\n')
-                    for j in range(srfinterp.shape[0]):
-                        row = str(np.round(interpwav[j], 2)) + '\t' + str(np.round(srfinterp[j], 6)) + '\n'
-                        f.write(row)
-
-            # We convert the dispersion in % of radiance to absolute values.
-            self.L1C_rad = l1c_rad[:, None] + etoa_unc * l1c_rad[:, None] / 100 + l1c_unc_rho * l1c_rad[:, None] / 100
-        else:
-            # We convert the dispersion in % of radiance to absolute values.
-            self.L1C_rad = l1c_rad[:, None] + l1c_unc_rho * l1c_rad[:, None] / 100
+        # We convert the dispersion in % of radiance to absolute values.
+        self.L1C_rad = l1c_rad[:, None] + l1c_unc_rho * l1c_rad[:, None] / 100
 
         # ---------------------------------  STEP 4. Generate L2A uncertainty samples  ---------------------------------
+        # ----------------------------------  STEP 4.1 Define libradtran input file  -----------------------------------
         for i in range(self.rep):
-            print(i)
-            # --------------------------------  STEP 4.1 Define libradtran input file  ---------------------------------
             librad.input_libradtran['atmosphere_file'] = (midlat,)
             aotsample = np.clip(np.round(np.random.normal(aot, aotunc), 4), 0.0001, None)  # could be negative
             librad.input_libradtran['aerosol_set_tau_at_wvl'] = (550.0, aotsample)
@@ -219,104 +187,75 @@ class L2aUnc:
             # reference North for S2, South for Libradtran. Clockwise or both cases.
             librad.input_libradtran['phi'] = (vaa,)
             librad.input_libradtran['phi0'] = ((saa + 180) % 360,)
-
             for bandname, band in zip(LIBRAD_REPTRANCHANNEL.keys(), range(len(LIBRAD_REPTRANCHANNEL))):
-                if toairrad_flag:   # For Thuillier case, we redefine the irradiance at each iteration
-                    with open(os.path.join(DATA_FOLDER, IRRADIANCE_FILE + LIBRAD_REPTRANCHANNEL[bandname]), 'w') as f:
-                        f.write('# nm \t mW/m2/nm\n')
-                        for j in range(irrad_interp[band].shape[0]):
-                            row = str(np.round(wav[band][j], 2)) + '\t' + str(
-                                np.round((1 + etoa_unc[band, i] / 100) * irrad_interp[band][j], 6)) + '\n'
-                            f.write(row)
+                librad.input_libradtran['mol_abs_param'] = ('reptran_channel', LIBRAD_REPTRANCHANNEL[bandname])
+                librad.libradtran_input(bandname,i)  # writes the updated input file. For each band generates input files
 
-                    librad.input_libradtran['wavelength'] = (S2BAND_RANGE[bandname][0], S2BAND_RANGE[bandname][1])
-                    # per_nm libRadtran assumes that the unit of the spectrum is W/(m2 nm)
-                    librad.input_libradtran['source'] = (
-                        'solar', os.path.join(DATA_FOLDER, IRRADIANCE_FILE + LIBRAD_REPTRANCHANNEL[bandname]), 'per_nm')
-                    # default "coarse". Small test showed minor changes with "medium". Use latter if hi-spec computer.
-                    librad.input_libradtran['mol_abs_param'] = ('reptran', 'medium')  # fine|medium|coarse
-                    librad.input_libradtran['filter_function_file'] = (
-                        os.path.join(DATA_FOLDER, LIBRAD_REPTRANCHANNEL[bandname] + 'interp'), 'normalize')
-                    librad.input_libradtran['output_process'] = ('integrate',)
-                else:
-                    librad.input_libradtran['mol_abs_param'] = ('reptran_channel', LIBRAD_REPTRANCHANNEL[bandname])
-                librad.libradtran_input(bandname)  # writes the updated input file. For each band generates input files
-            # ----------------------------  STEP 4.2 Execute libradtran and extract output  ----------------------------
-            # PARALLEL OPTION. Create a pool that runs all bands asynchronous with the number of processes in cpu.
-            pool = multiprocessing.Pool(multiprocessing.cpu_count())
-            results = [pool.apply_async(librad.libradtran_call, (band, self.libradbin,)) for band in
-                       LIBRAD_REPTRANCHANNEL.keys()]
-            pool.close()
-            pool.join()
-            # predefine array of atmospheric variables
-            lambd = np.zeros(len(LIBRAD_REPTRANCHANNEL))
-            lpath = np.zeros(len(LIBRAD_REPTRANCHANNEL))
-            edir = np.zeros(len(LIBRAD_REPTRANCHANNEL))
-            ediff = np.zeros(len(LIBRAD_REPTRANCHANNEL))
-            sph_albedo = np.zeros(len(LIBRAD_REPTRANCHANNEL))
-            tx_g2toa = np.zeros(len(LIBRAD_REPTRANCHANNEL))
-            tx_g2toa_dir = np.zeros(len(LIBRAD_REPTRANCHANNEL))
-            tx_g2toa_diff = np.zeros(len(LIBRAD_REPTRANCHANNEL))
-            values = [(res.get()[0], res.get()[1], res.get()[2], res.get()[3], res.get()[4], res.get()[5], res.get()[6],
-                       res.get()[7]) for res in results]
+        # ------------------------------  STEP 4.2 Execute libradtran and extract output  ------------------------------
+        # PARALLEL OPTION. runs all bands and repetitions asynchronous with the number of processes in cpu or defined.
+        pool = multiprocessing.Pool(n_proc)
+        results = []
+        for band in LIBRAD_REPTRANCHANNEL.keys():
+            for i in range(self.rep):
+                results.append(pool.apply_async(librad.libradtran_call, (band, i, self.libradbin,)))
+        pool.close()
+        pool.join()
 
-            # First value is the bandname because asynchronous processes might not return in order.
-            for val in values:
-                bandindex = list(LIBRAD_REPTRANCHANNEL.keys()).index(val[0])
-                lambd[bandindex] = val[1][0]
-                lpath[bandindex] = val[2][0]
-                edir[bandindex] = val[3][0]
-                ediff[bandindex] = val[4][0]
-                if toairrad_flag == 'Thuillier' or toairrad_flag == 'zero':
-                    sph_albedo[bandindex] = self.convolve_sphalbedo(val[5][0], val[0], wav[bandindex])
-                else:
-                    sph_albedo[bandindex] = val[5][0]
-                tx_g2toa_dir[bandindex] = val[6][0]
-                tx_g2toa_diff[bandindex] = val[7][0]
-                tx_g2toa[bandindex] = val[6][0] + val[7][0]  # tx direct + tx diffuse
+        # predefine array of atmospheric variables
+        self.lambd = np.zeros((len(LIBRAD_REPTRANCHANNEL),self.rep))
+        self.lpath = np.zeros((len(LIBRAD_REPTRANCHANNEL),self.rep))
+        self.edir = np.zeros((len(LIBRAD_REPTRANCHANNEL),self.rep))
+        self.ediff = np.zeros((len(LIBRAD_REPTRANCHANNEL),self.rep))
+        self.sph_albedo = np.zeros((len(LIBRAD_REPTRANCHANNEL),self.rep))
+        self.tx_g2toa = np.zeros((len(LIBRAD_REPTRANCHANNEL),self.rep))
+        self.tx_g2toa_dir = np.zeros((len(LIBRAD_REPTRANCHANNEL),self.rep))
+        self.tx_g2toa_diff = np.zeros((len(LIBRAD_REPTRANCHANNEL),self.rep))
+        values = [(res.get()[0], res.get()[1], res.get()[2], res.get()[3], res.get()[4], res.get()[5], res.get()[6],
+                   res.get()[7],res.get()[8]) for res in results]
 
-            # -----------------------------  STEP 4.3 RHO Lambertian flat uniform surface  -----------------------------
-            # calculates rho as lambertian flat and uniform case
-            rho = self.calculate_rho(self.L1C_rad[:, i], np.array(lpath), sph_albedo, np.array(tx_g2toa),
-                                     np.array(edir), np.array(ediff))
-            # --------------------------------  STEP 4.4 Add adjacency correction error --------------------------------
-            adj_unc = np.array([3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3])  # a default 3%
-            # Diff with adjacency modelled as 3% with same correlation as in etoa. Mean correction is 0!Not a problem!
-            if adjacency_flag:
-                corr_adj = utils.corr_rbf(1, 400, s2cw)
-                cov_diff_adj = np.dot(adj_unc.reshape(-1, 1), adj_unc.reshape(-1, 1).T) * corr_adj
-                rho_diff_adj = utils.correlated_samples(np.zeros(12), cov_diff_adj, 1)
-                rho += (tx_g2toa_diff / tx_g2toa_dir) * (rho - (rho + (rho_diff_adj / 100)))
-            # ---------------------------------  STEP 4.5 Lambertian assumption error ----------------------------------
-            # Hu et al. 1999 and Franch et al. 2013 show values 2-5% depending on the angular setup and optical depth.
-            lambertian_unc = np.array([3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3])  # a default 3%
-            # Absence of spectral correlation info. Use same spectral correlation as in etoa
-            if lambertian_flag:
-                corr_lamb = utils.corr_rbf(1, 400, s2cw)
-                cov_diff_lamb = np.dot(lambertian_unc.reshape(-1, 1), lambertian_unc.reshape(-1, 1).T) * corr_lamb
-                rho_diff_lamb = utils.correlated_samples(np.zeros(12), cov_diff_lamb, 1)
-                rho += (rho * rho_diff_lamb) / 100
+        # First value is the bandname and last is the index of the repetition because asynchronous processes might not return in order.
+        for val in values:
+            bandindex = list(LIBRAD_REPTRANCHANNEL.keys()).index(val[0])
+            self.lambd[bandindex,val[8]] = val[1][0]
+            self.lpath[bandindex,val[8]] = val[2][0]
+            self.edir[bandindex,val[8]] = val[3][0]
+            self.ediff[bandindex,val[8]] = val[4][0]
+            self.sph_albedo[bandindex,val[8]] = val[5][0]
+            self.tx_g2toa_dir[bandindex,val[8]] = val[6][0]
+            self.tx_g2toa_diff[bandindex,val[8]] = val[7][0]
+            self.tx_g2toa[bandindex,val[8]] = val[6][0] + val[7][0]  # tx direct + tx diffuse
 
-            # --------------------------------------  STEP 4.6 Libradtran error ----------------------------------------
-            # Based on values in Govaerts 2022. B8> 3%. Here 1.2% excluding 6SV due to limited spectral resolution.
-            # B5,B6,B7 not studied but given a 1.3%. B9 not studied but given a 2% due to water vapour effect.
-            # Gven as a value range. Thus, we take half of this range to represent uncertainty.
-            libradunc = np.array([1.7, 1.8, 1.9, 1.3, 1.3, 1.3, 1.3, 1.2, 0.8, 2, 2.9, 2]) / 2
-            if libradunc_flag:
-                corr_librad = utils.corr_rbf(1, 400, s2cw)
-                cov_diff_librad = np.dot(libradunc.reshape(-1, 1), libradunc.reshape(-1, 1).T) * corr_librad
-                rho_diff_librad = utils.correlated_samples(np.zeros(12), cov_diff_librad, 1)
-                rho += (rho * rho_diff_librad) / 100
+        # -----------------------------  STEP 4.3 RHO Lambertian flat uniform surface  -----------------------------
+        # calculates rho as lambertian flat and uniform case
+        self.L2Arho = self.calculate_rho(self.L1C_rad, self.lpath, self.sph_albedo, self.tx_g2toa, self.edir, self.ediff)
+        # --------------------------------  STEP 4.4 Add adjacency correction error --------------------------------
+        adj_unc = np.array([3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3])  # a default 3%
+        # Diff with adjacency modelled as 3% with same correlation as in etoa. Mean correction is 0!Not a problem!
+        if adjacency_flag:
+            corr_adj = utils.corr_rbf(1, 400, s2cw)
+            cov_diff_adj = np.dot(adj_unc.reshape(-1, 1), adj_unc.reshape(-1, 1).T) * corr_adj
+            rho_diff_adj = np.moveaxis(utils.correlated_samples(np.zeros(12), cov_diff_adj, self.rep),0,1)
+            self.L2Arho = self.L2Arho + (self.tx_g2toa_diff / self.tx_g2toa_dir) * (self.L2Arho - (self.L2Arho + (rho_diff_adj / 100)))
+        # ---------------------------------  STEP 4.5 Lambertian assumption error ----------------------------------
+        # Hu et al. 1999 and Franch et al. 2013 show values 2-5% depending on the angular setup and optical depth.
+        lambertian_unc = np.array([3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3])  # a default 3%
+        # Absence of spectral correlation info. Use same spectral correlation as in etoa
+        if lambertian_flag:
+            corr_lamb = utils.corr_rbf(1, 400, s2cw)
+            cov_diff_lamb = np.dot(lambertian_unc.reshape(-1, 1), lambertian_unc.reshape(-1, 1).T) * corr_lamb
+            rho_diff_lamb = np.moveaxis(utils.correlated_samples(np.zeros(12), cov_diff_lamb, self.rep),0,1)
+            self.L2Arho = self.L2Arho + (self.L2Arho * rho_diff_lamb) / 100
 
-            # -----------------------------  STEP 4.7 Store the samples and next iteration -----------------------------
-            self.lpath[:, i] = lpath
-            self.edir[:, i] = edir
-            self.ediff[:, i] = ediff
-            self.sph_albedo[:, i] = sph_albedo
-            self.tx_g2toa[:, i] = tx_g2toa
-            self.tx_g2toa_dir[:, i] = tx_g2toa_dir
-            self.tx_g2toa_diff[:, i] = tx_g2toa_diff
-            self.L2Arho[:, i] = rho
+        # --------------------------------------  STEP 4.6 Libradtran error ----------------------------------------
+        # Based on values in Govaerts 2022. B8> 3%. Here 1.2% excluding 6SV due to limited spectral resolution.
+        # B5,B6,B7 not studied but given a 1.3%. B9 not studied but given a 2% due to water vapour effect.
+        # Given as a value range. Thus, we take half of this range to represent uncertainty.
+        libradunc = np.array([1.7, 1.8, 1.9, 1.3, 1.3, 1.3, 1.3, 1.2, 0.8, 2, 2.9, 2]) / 2
+        if libradunc_flag:
+            corr_librad = utils.corr_rbf(1, 400, s2cw)
+            cov_diff_librad = np.dot(libradunc.reshape(-1, 1), libradunc.reshape(-1, 1).T) * corr_librad
+            rho_diff_librad = np.moveaxis(utils.correlated_samples(np.zeros(12), cov_diff_librad, self.rep),0,1)
+            self.L2Arho = self.L2Arho + (self.L2Arho * rho_diff_librad) / 100
 
         # --------------------------------  STEP 5. Generate atm.function correlation  ---------------------------------
         for band in range(len(LIBRAD_REPTRANCHANNEL)):
@@ -330,12 +269,6 @@ class L2aUnc:
                                         self.edir[band, :] + self.ediff[band, :], self.sph_albedo[band, :]]).T,
                               columns=[r'$L_{toa}$', r'$L_{path}$', r'$\tau_{up}$', r'$E_{g}$', r'$s_{atm}$'])
             self.rbis.append(df.corr())
-            if toairrad_flag == 'Thuillier':
-                df = pd.DataFrame(np.array([etoa_unc[band, :], self.lpath[band, :], self.tx_g2toa[band, :],
-                                            self.edir[band, :], self.ediff[band, :], self.sph_albedo[band, :]]).T,
-                                  columns=[r'$E_{toa}$', r'$L_{path}$', r'$\tau_{up}$', r'$E_{g(dir)}$',
-                                           r'$E_{g(diff)}$', r'$s_{atm}$'])
-                self.r_etoa.append(df.corr())
 
         # ----------------------------------  STEP 6. Generate spectral correlation  -----------------------------------
         self.r_L1Crad = self.get_spectralcorrelation(self.L1C_rad[:, :])
@@ -347,9 +280,9 @@ class L2aUnc:
         self.r_L2Arho = self.get_spectralcorrelation(self.L2Arho[:, :])
 
         # this will be useful to store the parameterisation of the simulation.
-        self.paramdict = {'tagfile': os.path.basename(path_l1c[0:-4]), 'sza': sza, 'vza': vza, 'saa': saa, 'vaa': saa,
-                          'aot': aot, 'wv': wv, 'h': h, 'ozone': ozone, 'atm': midlat, 'toa_irrad': toairrad_flag,
-                          'aot_method': aot_method, 'adjacency': adjacency_flag, 'lamb_correction_unc': lambertian_flag,
+        self.paramdict = {'tagfile': os.path.basename(path_l1c[0:-9]), 'sza': sza, 'vza': vza, 'saa': saa, 'vaa': saa,
+                          'aot': aot, 'wv': wv, 'h': h, 'ozone': ozone, 'atm': midlat, 'aot_method': aot_method,
+                          'adjacency': adjacency_flag, 'lamb_correction_unc': lambertian_flag,
                           'libradtran_unc': libradunc_flag}
 
         # generate an L2A uncertainty theory to compare. Due to complex modelling only for Lambertian uniform case.
@@ -365,19 +298,6 @@ class L2aUnc:
         df = pd.DataFrame(values.T, columns=LIBRAD_REPTRANCHANNEL.keys())
         return (df.corr())
 
-    def convolve_sphalbedo(self, values, band, wav):
-        '''
-        For the spherical albedo, we define the convolution a-posteriori since it seems a bug in Libradtran does not
-        allow for a correct convolution.
-        :param values: values of spherical albedo from Libradtran. Grid given by "wav", input grid defined by TOA irrad
-        :param band:
-        :param wav:
-        :return:
-        '''
-        srf = np.loadtxt(os.path.join(DATA_FOLDER, LIBRAD_REPTRANCHANNEL[band]))
-        srf_interp = np.interp(wav, srf[:, 0], srf[:, 1])
-        return np.sum(values * srf_interp) / np.sum(srf_interp)
-
     def calculate_rho(self, L1C_rad, lpath, sph_albedo, trans_g2toa, edir, ediff):
         # we also calculate the rho toa dispersion to understand the combined impact on the distribution
         rho = (L1C_rad - lpath) * math.pi * (1 - 0.15 * sph_albedo) / (trans_g2toa * (edir + ediff))
@@ -387,7 +307,6 @@ class L2aUnc:
         '''
         Get a theoretical uncertainty based on jacobian matrices that will be used as a validation.
         Here no uncertainty of the TOA radiance is set and tests for Lref and assumed L1c uncertainty = 3%
-        :param band: string with selected S2 band
         :return:
         '''
         for bandname, band in zip(LIBRAD_REPTRANCHANNEL.keys(), range(len(LIBRAD_REPTRANCHANNEL))):
@@ -440,7 +359,7 @@ class L2aUnc:
         l1c_uncsamples = rutl1.unc_spectralcorrelation(radval, l1cmetadatadict, self.rep)
         return np.array(l1c_uncsamples)
 
-    def plot_results(self, toairrad_flag):
+    def plot_results(self):
         plots_L2aunc.plot_spectralcorrelation(self.r_L2Arho, r'$\rho _{surf}$', 'L2Arho', self.paramdict['tagfile'])
         plots_L2aunc.plot_spectralcorrelation(self.r_L1Crad, r'$L_{TOA}$', 'ltoa', self.paramdict['tagfile'])
         for bandname, band in zip(LIBRAD_REPTRANCHANNEL.keys(), range(len(LIBRAD_REPTRANCHANNEL))):
@@ -483,25 +402,3 @@ class L2aUnc:
 
             plots_L2aunc.plot_functioncorrelation(self.r[band], bandname, 'corr', self.paramdict['tagfile'])
             plots_L2aunc.plot_functioncorrelation(self.rbis[band], bandname, 'corrbis', self.paramdict['tagfile'])
-            # if toairrad_flag:
-            #     # NOTE: empty plot if irradiance uncertainty is zero. Not considered if reptran channel is used
-            #     plots_L2aunc.plot_etoacorrelation(
-            #         np.array([self.r_etoa[band].values[0, 1:] for band in range(len(LIBRAD_REPTRANCHANNEL))]),
-            #         r'$E_{g(TOA)}$', self.paramdict['tagfile'], LIBRAD_REPTRANCHANNEL.keys())
-
-# irrads = np.loadtxt(
-#     os.path.join(DATA_FOLDER, IRRADIANCE_FILE + LIBRAD_REPTRANCHANNEL[bandname] + ' (1)'))
-# wav.append(irrads[:,0])
-# with open(os.path.join(DATA_FOLDER, IRRADIANCE_FILE + LIBRAD_REPTRANCHANNEL[bandname] + 'modified'), 'w') as f:
-#     f.write('# nm \t mW/m2/nm\n')
-#     for j in range(irrads.shape[0]):
-#         row = str(np.round(irrads[j,0], 2)) + '\t' + str(
-#             np.round((1 + etoa_unc[band, i] / 100) * irrads[j,1], 6)) + '\n'
-#         f.write(row)
-# librad.input_libradtran['wavelength'] = (irrads[0,0], irrads[-1,0])
-# per_nm libRadtran assumes that the unit of the spectrum is W/(m2 nm)
-# librad.input_libradtran['source'] = (
-#     'solar', os.path.join(DATA_FOLDER, IRRADIANCE_FILE + LIBRAD_REPTRANCHANNEL[bandname] + 'modified'),
-#     'per_nm')
-# librad.input_libradtran['filter_function_file'] = (
-#     os.path.join(DATA_FOLDER, LIBRAD_REPTRANCHANNEL[bandname] + 'resampled'), 'normalize')

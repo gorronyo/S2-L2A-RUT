@@ -1,20 +1,20 @@
 source solar
 number_of_streams 8
 output_user lambda uu edir edn
-sza 17.743263
+sza 21.311052
 atmosphere_file midlatitude_summer
 mol_abs_param reptran_channel sentinel2a_msi_b07
-mixing_ratio ch4 1.9772
-mixing_ratio co2 429.2
-mol_modify h2o 46.2139 mm
-altitude 0.158
+mixing_ratio ch4 1.8364
+mixing_ratio co2 412.9
+mol_modify h2o 22.8256 mm
+altitude 0.143
 albedo 0.15
-umu 0.9955752
-phi 97.10701
+umu 0.99949795
+phi 259.94415
 aerosol_default 
 zout sur
-phi0 282.46776580810547
+phi0 299.97434997558594
 rte_solver disort
-aerosol_set_tau_at_wvl 550.0 0.7695
-mol_modify O3 287.07 DU
+aerosol_set_tau_at_wvl 550.0 0.5312
+mol_modify O3 269.88 DU
 quiet

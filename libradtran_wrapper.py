@@ -52,7 +52,13 @@ class libradwrapper:
             'rte_solver': ('disort',)
         }
 
-    def libradtran_input(self, band):
+    def libradtran_input(self, band, i):
+        '''
+
+        :param band:
+        :param i:
+        :return:
+        '''
         # pipe = open(os.path.join(PATH_INP_OUT_FILES, TOAFILE + band + '.inp'), 'w')
         # for key, values in self.input_libradtran.items():
         #     input_line = '{} {}\n'.format(key, ' '.join([str(v) for v in values]))
@@ -60,7 +66,7 @@ class libradwrapper:
         # pipe.write('quiet\n')
         # pipe.close()
 
-        pipe = open(os.path.join(PATH_INP_OUT_FILES, PATHFILE + band + '.inp'), 'w')
+        pipe = open(os.path.join(PATH_INP_OUT_FILES, PATHFILE + band + '_' + str(i) + '.inp'), 'w')
         for key, values in self.input_libradtran.items():
             if key == 'albedo':
                 continue  # for path radiance, we must set surface albedo to zero.
@@ -69,7 +75,7 @@ class libradwrapper:
         pipe.write('quiet\n')
         pipe.close()
 
-        pipe = open(os.path.join(PATH_INP_OUT_FILES, SPHERFILE + band + '.inp'), 'w')
+        pipe = open(os.path.join(PATH_INP_OUT_FILES, SPHERFILE + band + '_' + str(i) + '.inp'), 'w')
         for key, values in self.input_libradtran.items():
             # for spherical albedo, surface albedo and viewing angles should be omitted.
             # also 'filter_function_file' and 'output_process'.A bug in Libradtran seems not to let the convolution here
@@ -83,7 +89,7 @@ class libradwrapper:
         pipe.write('quiet\n')
         pipe.close()
 
-        pipe = open(os.path.join(PATH_INP_OUT_FILES, SURFFILE + band + '.inp'), 'w')
+        pipe = open(os.path.join(PATH_INP_OUT_FILES, SURFFILE + band + '_' + str(i) + '.inp'), 'w')
         for key, values in self.input_libradtran.items():
             if key == 'output_user':
                 values = ['lambda', 'uu', 'edir', 'edn']  # relevant downwelling (direc and diffuse) irradiance.
@@ -94,7 +100,7 @@ class libradwrapper:
         pipe.write('quiet\n')
         pipe.close()
 
-        pipe = open(os.path.join(PATH_INP_OUT_FILES, TXFILE + band + '.inp'), 'w')
+        pipe = open(os.path.join(PATH_INP_OUT_FILES, TXFILE + band + '_' + str(i) + '.inp'), 'w')
         for key, values in self.input_libradtran.items():
             if key == 'output_user':
                 values = ['lambda', 'uu', 'edir', 'edn']  # also relevant downwelling (direc and diffuse) irradiance.
@@ -108,32 +114,31 @@ class libradwrapper:
         pipe.write('quiet\n')
         pipe.close()
 
-    def libradtran_call(self, band, libradbin):
+    def libradtran_call(self, band, i, libradbin):
+        '''
+
+        :param band:
+        :param i:
+        :param libradbin:
+        :return:
+        '''
         # proc1 = subprocess.Popen(
         #     './uvspec < ' + os.path.join(PATH_INP_OUT_FILES, TOAFILE + band + '.inp') + ' > "' + os.path.join(
         #         PATH_INP_OUT_FILES,
         #         TOAFILE + band + '.out') + '"',
         #     shell=True, cwd=UVSPEC_PATH)
         proc2 = subprocess.Popen(
-            './uvspec < ' + os.path.join(PATH_INP_OUT_FILES, PATHFILE + band + '.inp') + ' > "' + os.path.join(
-                PATH_INP_OUT_FILES,
-                PATHFILE + band + '.out') + '"',
-            shell=True, cwd=libradbin)
+            './uvspec < ' + os.path.join(PATH_INP_OUT_FILES, PATHFILE + band + '_' + str(i) + '.inp') + ' > "' + os.path.join(
+                PATH_INP_OUT_FILES, PATHFILE + band + '_' + str(i) + '.out') + '"', shell=True, cwd=libradbin)
         proc3 = subprocess.Popen(
-            './uvspec < ' + os.path.join(PATH_INP_OUT_FILES, SPHERFILE + band + '.inp') + ' > "' + os.path.join(
-                PATH_INP_OUT_FILES,
-                SPHERFILE + band + '.out') + '"',
-            shell=True, cwd=libradbin)
+            './uvspec < ' + os.path.join(PATH_INP_OUT_FILES, SPHERFILE + band + '_' + str(i) + '.inp') + ' > "' + os.path.join(
+                PATH_INP_OUT_FILES, SPHERFILE + band + '_' + str(i) + '.out') + '"', shell=True, cwd=libradbin)
         proc4 = subprocess.Popen(
-            './uvspec < ' + os.path.join(PATH_INP_OUT_FILES, SURFFILE + band + '.inp') + ' > "' + os.path.join(
-                PATH_INP_OUT_FILES,
-                SURFFILE + band + '.out') + '"',
-            shell=True, cwd=libradbin)
+            './uvspec < ' + os.path.join(PATH_INP_OUT_FILES, SURFFILE + band + '_' + str(i) + '.inp') + ' > "' + os.path.join(
+                PATH_INP_OUT_FILES, SURFFILE + band + '_' + str(i) + '.out') + '"', shell=True, cwd=libradbin)
         proc5 = subprocess.Popen(
-            './uvspec < ' + os.path.join(PATH_INP_OUT_FILES, TXFILE + band + '.inp') + ' > "' + os.path.join(
-                PATH_INP_OUT_FILES,
-                TXFILE + band + '.out') + '"',
-            shell=True, cwd=libradbin)
+            './uvspec < ' + os.path.join(PATH_INP_OUT_FILES, TXFILE + band + '_' + str(i) + '.inp') + ' > "' + os.path.join(
+                PATH_INP_OUT_FILES, TXFILE + band + '_' + str(i) + '.out') + '"', shell=True, cwd=libradbin)
         # proc1.wait()
         proc2.wait()
         proc3.wait()
@@ -142,13 +147,13 @@ class libradwrapper:
         # Default output for disort is output_user lambda, edir, edn, eup, uavgdir, uavgdn, uavgup
         # libradtoa = pd.read_csv(os.path.join(PATH_INP_OUT_FILES, TOAFILE + band + '.out'), delimiter='\s+',
         #                         names=['lambd', 'uu'])
-        libradpath = pd.read_csv(os.path.join(PATH_INP_OUT_FILES, PATHFILE + band + '.out'), delimiter='\s+',
+        libradpath = pd.read_csv(os.path.join(PATH_INP_OUT_FILES, PATHFILE + band + '_' + str(i) + '.out'), delimiter='\s+',
                                  names=['lambd', 'uu'])
-        libradspher = pd.read_csv(os.path.join(PATH_INP_OUT_FILES, SPHERFILE + band + '.out'), delimiter='\s+',
+        libradspher = pd.read_csv(os.path.join(PATH_INP_OUT_FILES, SPHERFILE + band + '_' + str(i) + '.out'), delimiter='\s+',
                                   names=['lambd', 'spher_alb'])
-        libradsurf = pd.read_csv(os.path.join(PATH_INP_OUT_FILES, SURFFILE + band + '.out'), delimiter='\s+',
+        libradsurf = pd.read_csv(os.path.join(PATH_INP_OUT_FILES, SURFFILE + band + '_' + str(i) + '.out'), delimiter='\s+',
                                  names=['lambd', 'uu', 'edir', 'edn'])
-        libradtx = pd.read_csv(os.path.join(PATH_INP_OUT_FILES, TXFILE + band + '.out'), delimiter='\s+',
+        libradtx = pd.read_csv(os.path.join(PATH_INP_OUT_FILES, TXFILE + band + '_' + str(i) + '.out'), delimiter='\s+',
                                  names=['lambd', 'uu', 'edir', 'edn'])
 
         # # Libradtran output is divided to obtain the transmittance. If 0 value in denominator, convert Nan to 0.
@@ -159,7 +164,17 @@ class libradwrapper:
         # trans_g2toa[trans_g2toa == float('-inf')] = 0
         # trans_g2toa[trans_g2toa < 0] = 0
 
+        # remove the two files that you just generated (this can be commented but will avoid a lot of clutter)
+        os.remove(os.path.join(PATH_INP_OUT_FILES, PATHFILE + band + '_' + str(i) + '.out'))
+        os.remove(os.path.join(PATH_INP_OUT_FILES, SPHERFILE + band + '_' + str(i) + '.out'))
+        os.remove(os.path.join(PATH_INP_OUT_FILES, SURFFILE + band + '_' + str(i) + '.out'))
+        os.remove(os.path.join(PATH_INP_OUT_FILES, TXFILE + band + '_' + str(i) + '.out'))
+        os.remove(os.path.join(PATH_INP_OUT_FILES, PATHFILE + band + '_' + str(i) + '.inp'))
+        os.remove(os.path.join(PATH_INP_OUT_FILES, SPHERFILE + band + '_' + str(i) + '.inp'))
+        os.remove(os.path.join(PATH_INP_OUT_FILES, SURFFILE + band + '_' + str(i) + '.inp'))
+        os.remove(os.path.join(PATH_INP_OUT_FILES, TXFILE + band + '_' + str(i) + '.inp'))
+
         return (band, libradpath['lambd'].to_numpy().astype('float32'), libradpath['uu'].to_numpy().astype('float32'),
                 libradsurf['edir'].to_numpy().astype('float32'), libradsurf['edn'].to_numpy().astype('float32'),
                 libradspher['spher_alb'].to_numpy().astype('float32'), libradtx['edir'].to_numpy().astype('float32'),
-                libradtx['edn'].to_numpy().astype('float32'))
+                libradtx['edn'].to_numpy().astype('float32'),i)

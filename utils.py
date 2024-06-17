@@ -4,7 +4,6 @@ Created on Wed Jan 20 13:48:33 2016
 @author: jg9
 """
 
-import math
 import numpy as np
 from scipy.stats import multivariate_normal
 import L2a_unc
@@ -29,6 +28,7 @@ def correlated_samples(means, cov_matrix, numbersamples):
     # TODO - a multivariate normal is a first approach but there are many other options that will need to consider.
     # see more here https://docs.scipy.org/doc/scipy/reference/stats.html#multivariate-distributions
     distribution = multivariate_normal(mean=means, cov=cov_matrix, allow_singular=True)
+
     return distribution.rvs(numbersamples)
 
 
@@ -95,3 +95,15 @@ def get_l1c(L1Cbands, latlon, roisize, path_L1C, path_l2A):
     return s2proc
 
 # def get_l2a(L2Abands, latlon, roisize, path_L2A):
+
+def unc_montecarlo(pdf, bins, meanval):
+    up = [t for t, x in enumerate(bins) if x > meanval][0]
+    area = sum(np.diff(bins[up - 1:up + 1]) * pdf[up - 1])
+    inc = 1
+    while area < 0.68268 and inc <= up and up + inc < np.size(bins) - 1 and up - 1 - inc > 0:
+        area = sum(np.diff(bins[up - 1 - inc:up + inc + 1]) * pdf[up - 1 - inc:up + inc])
+        inc += 1
+    bin_down = bins[up - 1 - inc]
+    bin_up = bins[up + inc]
+
+    return bin_down, bin_up, 100 * area
